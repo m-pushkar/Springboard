@@ -1,4 +1,5 @@
 import warnings
+
 warnings.filterwarnings('ignore')
 
 import pandas as pd
@@ -8,13 +9,11 @@ import os.path
 from sklearn.metrics.pairwise import linear_kernel
 
 # for distance calculations
-from geopy.distance import great_circle
-from geopy.geocoders import Nominatim
 
 
 class Recommender_Engine:
     ###----------------------------------------Keyword Search Recommender--------------------------------------------###
-    def __init__(self, n=5, stars_original=False):
+    def __init__(self, n=5, stars_original=False, personalized=False):
         ###-------------------------------------------Import datasets------------------------------------------------###
         self.business = pd.read_csv('clean_business.csv')
         self.business['postal_code'] = self.business.postal_code.astype(str)
@@ -47,14 +46,11 @@ class Recommender_Engine:
 
         # Pre-load pickle files
         if personalized:
-
             # For collaborative module
             with open('svd_algo_trained_info', 'rb') as f:
                 useful_info = pickle.load(f)
 
             # For content based module
-
-
 
     def filter_location(self):
         """
@@ -105,7 +101,7 @@ class Recommender_Engine:
                     idx.append(i)
         self.recommendation = self.recommendation.loc[idx]
 
-    def display(self):
+    def display(self, n=5):
 
         if len(self.recommendation) == 0:
             print("Sorry, there are no matching recommendations.")
@@ -116,8 +112,9 @@ class Recommender_Engine:
             print("Below is the list of the top {} recommended restaurants for you: ".format(len(self.recommendation)))
             print(self.recommendation.iloc[self.disply_columns])
 
-    def keyword_filtering(self, catalog=business[business.is_open == 1], price=None, \
-                          zipcode=None, city=None, state=None, distance_max=10, cuisine=None, style=None):
+    def keyword_filtering(self, catalog=None, price=None, \
+                          zipcode=None, city=None, state=None, distance_max=10, cuisine=None, style=None,
+                          personalized=False, stars_original=False):
 
         self.recommendation = catalog  # Set restaurant catalog
         self.recommendation['distance__recommendations'] = np.nan  # Reset distance
@@ -176,6 +173,61 @@ class Recommender_Engine:
 
         return self.recommendation
 
+    ###----------------------------------------------Content Recommeder----------------------------------------------###
+    def content_filtering(self, user_id=None):
+        self.user_id = user_id
+        if self.user_id is None:
+            print('User ID is not provided')
+            return None
+        if len(user_id) != 22:  # Sanity check on length of user id
+            print('Invalid user ID')
+            return None
+        if self.user_id not in review_clean.user_id.unique():
+            print('No user data available yet!')
+            return []
+
+        self.recommendation = business[business.is_open == 1]
+        if 'stars_pred' in self.recommendation.columns:
+            self.recommendation.drop('stars_pred', axis=1, inplace=True)
+
+        self.display_columns = ['name', 'address', 'city', 'state', \
+                                'attributes.RestaurantsPriceRange2', \
+                                'review_count', 'stars', 'stars_adj', \
+                                'cuisine', 'style']
+
+        max_bytes = 2 ** 31 - 1
+        bytes_in = bytearray(0)
+        input_size_bus = os.path.getsize('bus_pcaFeature.pkl')
+        input_size_bus = os.path.getsize('user_pcaFeature.pkl')
+
+        with open('bus_pcaFeature.pkl', 'rb') as f:
+            bus_pcaFeature = pickle.load(f)
+
+        with open('user_pcaFeature.pkl', 'rb') as f:
+            user_pcaFeature = pickle.load(f)
+
+        # Recommendations
+        score_matrix = linear_kernel(user_pcaFeature.loc[user_id].values.reshape(1, -1), bus_pcaFeature)
+        score_matrix = score_matrix.flatten()
+        score_matrix = pd.Series(score_matrix, index=bus_pcaFeature.index)
+        score_matrix.name = 'cosine_sim_score'
+
+        self.recommendation = pd.concat([score_matrix, self.recommendation.set_index('business_id')], axis=1,
+                                        join='inner').reset_index()
+
+        # Filter restaurants not rated by user
+        rated_res = review_clean[review_clean.user_id == self.user_id].business_id.unique()
+        self.recommendation = self.recommendation[~self.recommendation.business_id.isin(rated_res)]
+
+        # Sort restaurants by cosine similarity score
+        self.recommendation = self.recommendation.sort_values('cosine_sim_score', ascending=False).reset_index(
+            drop=True)
+
+        self.display_columns.insert(0, 'cosine_sim_score')
+        self.display()
+
+        return self.recommendation
+
     ###------------------------------------------Collaborative Recommeder--------------------------------------------###
     def collaborative_filtering(self, user_id=None):
         self.user_id = user_id
@@ -230,4 +282,3 @@ class Recommender_Engine:
         self.display()
 
         return self.recommendation
-
