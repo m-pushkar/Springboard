@@ -1,4 +1,4 @@
-from recommeder_engine import Recommender_Engine
+from recommender_engine import Recommender_Engine
 
 print('Welcome to the restaurants recommender')
 print('\n Loading...')
@@ -127,7 +127,7 @@ while boolean:
             try:
                 user_input = int(user_input)
                 if user_input not in [1, 2]:
-                    print('Invalid inout, tray again')
+                    print('Invalid input, tray again')
                     continue
                 else:
                     print('Awesome, all set')
@@ -140,11 +140,12 @@ while boolean:
                         result = recommender.content_filtering(user_id=user_id)
                         print('**********************************************************')
             except:
-                print('Oops, invalid inout. Try again')
+                print('Oops, invalid input. Try again')
                 continue
 
     # Non personalized module
-    else:
+    elif user_input.startswith('N') or user_input.startswith('n'):
+
         print('Lets filter by keyword and get recommendations')
         city, zipcode, state, max_distance, cuisine, style, price = get_keyword()
         user_input = input('Want to rank restaurants by smart ratings? Yes/No')
@@ -156,27 +157,27 @@ while boolean:
                                                cuisine=cuisine, style=style, price=price, stars_original=stars_original)
         print('**********************************************************')
 
-        if result is not None and len(result) > 0:
-            user_input = input('How many recommendations would you like to see?')
-            try:
-                n = int(user_input)
-                print('**********************************************************')
-                recommender.display(n=n)
-                print('**********************************************************')
-            except:
-                pass
-            user_input = input('Would you like to further filter? Yes/No')
-            if user_input.startswith('Y') or user_input.startswith('y'):
-                city, zipcode, state, max_distance, cuisine, style, price = get_keyword()
-                print('**********************************************************')
-                result = recommender.keyword_filtering(catalog=result, city=city, zipcode=zipcode, state=state,
-                                                       distance_max=max_distance, cuisine=cuisine, style=style,
-                                                       price=price, personalized=personalized)
-                print('**********************************************************')
+    if result is not None and len(result) > 0:
+        user_input = input('How many recommendations would you like to see?')
+        try:
+            n = int(user_input)
+            print('**********************************************************')
+            recommender.display(n=n)
+            print('**********************************************************')
+        except:
+            pass
+        user_input = input('Would you like to further filter? Yes/No')
+        if user_input.startswith('Y') or user_input.startswith('y'):
+            city, zipcode, state, max_distance, cuisine, style, price = get_keyword()
+            print('**********************************************************')
+            result = recommender.keyword_filtering(catalog=result, city=city, zipcode=zipcode, state=state,
+                                                   distance_max=max_distance, cuisine=cuisine, style=style,
+                                                   price=price, personalized=personalized)
+            print('**********************************************************')
 
-        # Restart or quit
-        print('All done!')
-        user_input = input('Please enter q to quit the engine or r to restart')
-        if len(user_input) == 0 or user_input.startswith('Q') or user_input.startswith('Q'):
-            boolean = False
-            print('Thank you, see you next time!')
+    # Restart or quit
+    print('All done!')
+    user_input = input('Please enter q to quit the engine or r to restart')
+    if len(user_input) == 0 or user_input.startswith('Q') or user_input.startswith('Q'):
+        boolean = False
+        print('Thank you, see you next time!')

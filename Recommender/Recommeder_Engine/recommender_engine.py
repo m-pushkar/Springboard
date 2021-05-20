@@ -7,6 +7,8 @@ import numpy as np
 import pickle
 import os.path
 from sklearn.metrics.pairwise import linear_kernel
+from geopy.geocoders import Nominatim
+from geopy.distance import great_circle
 
 # for distance calculations
 
@@ -31,7 +33,8 @@ class Recommender_Engine:
         """
         self.n = n  # Number of recommendations
         self.stars_original = stars_original  # Boolean for ranking method
-        self.disply_columns = ['name', 'address', 'city', 'state', \
+        self.module = 0
+        self.display_columns = ['name', 'address', 'city', 'state', \
                                'attributes.RestaurantsPriceRange2', \
                                'review_count', 'stars', 'stars_adj', \
                                'cuisine', 'style']  # List of columns to be displayed in the results
@@ -42,7 +45,7 @@ class Recommender_Engine:
             score = 'stars_adj'
 
         # Filter only open restaurants
-        self.recommendation = business[business.is_open == 1].sort_values(score, ascending=False)
+        self.recommendation = self.business[self.business.is_open == 1].sort_values(score, ascending=False)
 
         # Pre-load pickle files
         if personalized:
@@ -51,13 +54,16 @@ class Recommender_Engine:
                 useful_info = pickle.load(f)
 
             # For content based module
+            with open('bus_pcaFeature.pkl', 'rb') as f:
+                bus_pcaFeature = pickle.load(f)
+
+            with open('user_pcaFeature.pkl', 'rb') as f:
+                user_pcaFeature = pickle.load(f)
 
     def filter_location(self):
         """
         Filter recommendations by user's location. Matching restaurant is the restaurant within the acceptable distance of the location of interest.
         """
-        from geopy.geocoders import Nominatim
-        from geopy.distance import great_circle
 
         geolocator = Nominatim(user_agent="Recommendation")
         address = [self.city, self.state, self.zipcode]
@@ -69,11 +75,11 @@ class Recommender_Engine:
             (lambda row: (great_circle((row.latitude, row.longitude), (location.latitude, location.longitude)).miles),
              axis=1)
 
-        self.disply_columns.insert(0, 'distance_recommendations')
+        self.display_columns.insert(0, 'distance_recommendations')
         self.recommendation = self.recommendation[self.recommendation.distance_recommendations <= self.distance_max]
 
     def filter_state(self):
-        self.recommendation = self.recommendation[self.recommendation.state == self.state]
+        self.recommendation = self.recommendation[self.recommendation.state == self.state.upper()]
 
     def filter_price(self):
         self.recommendation = self.recommendation[self.recommendation \
@@ -107,18 +113,21 @@ class Recommender_Engine:
             print("Sorry, there are no matching recommendations.")
         elif self.n < len(self.recommendation):
             print("Below is the list of the top {} recommended restaurants for you: ".format(self.n))
-            print(self.recommendation.iloc[:self.n][self.disply_columns])
+            print(self.recommendation.iloc[:self.n][self.display_columns])
         else:
             print("Below is the list of the top {} recommended restaurants for you: ".format(len(self.recommendation)))
-            print(self.recommendation.iloc[self.disply_columns])
+            print(self.recommendation.iloc[self.display_columns])
+            
+    ###----------------------------------------------Keyword Recommender---------------------------------------------###
 
     def keyword_filtering(self, catalog=None, price=None, \
                           zipcode=None, city=None, state=None, distance_max=10, cuisine=None, style=None,
                           personalized=False, stars_original=False):
 
-        self.recommendation = catalog  # Set restaurant catalog
-        self.recommendation['distance__recommendations'] = np.nan  # Reset distance
-        self.disply_columns = ['name', 'address', 'city', 'state', \
+        # Set restaurant catalog
+        self.recommendation = catalog if catalog is not None else self.business[self.business.is_open == 1]  
+        self.recommendation['distance_recommendations'] = np.nan  # Reset distance
+        self.display_columns = ['name', 'address', 'city', 'state', \
                                'attributes.RestaurantsPriceRange2', \
                                'review_count', 'stars', 'stars_adj', \
                                'cuisine', 'style']  # Reset columns
@@ -131,6 +140,13 @@ class Recommender_Engine:
         self.cuisine = cuisine
         self.style = style
         self.price = price
+        
+        # Check self.module and col names to see personalized score
+        if personalized:
+            if(self.module == 0) or ('stars_pred' not in self.recommendation.columns and 'cosine_sim_score' not in self.recommendation.columns):
+                print('No personalized recommendations are generated yet!')
+                print('Please run the content or collaborative module for personalized recommendations')
+                return None
 
         # Filter_location
         if (self.zipcode != None) or (self.city != None) or (self.state != None):
@@ -161,7 +177,14 @@ class Recommender_Engine:
                 print("Sorry, there are no matching recommendations.")
 
         # Sort recommendations by user input for ranking method
-        if self.stars_original:
+        if personalized:
+            if self.module == 1:
+                score = 'stars_pred'
+                self.display_columns.insert(0, 'stars_pred')
+            elif self.module == 2:
+                score = 'cosine_sim_score'
+                self.display_columns.insert(0, 'cosine_sim_score')
+        elif self.stars_original:
             score = 'stars'
         else:
             score = 'stars_adj'
@@ -173,7 +196,7 @@ class Recommender_Engine:
 
         return self.recommendation
 
-    ###----------------------------------------------Content Recommeder----------------------------------------------###
+    ###----------------------------------------------Content Recommender---------------------------------------------###
     def content_filtering(self, user_id=None):
         self.user_id = user_id
         if self.user_id is None:
@@ -182,41 +205,31 @@ class Recommender_Engine:
         if len(user_id) != 22:  # Sanity check on length of user id
             print('Invalid user ID')
             return None
-        if self.user_id not in review_clean.user_id.unique():
+        if self.user_id not in self.review_s.user_id.unique():
             print('No user data available yet!')
-            return []
+            return None
 
-        self.recommendation = business[business.is_open == 1]
-        if 'stars_pred' in self.recommendation.columns:
-            self.recommendation.drop('stars_pred', axis=1, inplace=True)
+        # Initiate the module every time
+        self.recommendation = self.business[self.business.is_open == 1]
+        if 'cosine_sim_score' in self.recommendation.columns:
+            self.recommendation.drop('cosine_sim_score', axis=1, inplace=True)
 
         self.display_columns = ['name', 'address', 'city', 'state', \
                                 'attributes.RestaurantsPriceRange2', \
                                 'review_count', 'stars', 'stars_adj', \
                                 'cuisine', 'style']
 
-        max_bytes = 2 ** 31 - 1
-        bytes_in = bytearray(0)
-        input_size_bus = os.path.getsize('bus_pcaFeature.pkl')
-        input_size_bus = os.path.getsize('user_pcaFeature.pkl')
-
-        with open('bus_pcaFeature.pkl', 'rb') as f:
-            bus_pcaFeature = pickle.load(f)
-
-        with open('user_pcaFeature.pkl', 'rb') as f:
-            user_pcaFeature = pickle.load(f)
-
         # Recommendations
-        score_matrix = linear_kernel(user_pcaFeature.loc[user_id].values.reshape(1, -1), bus_pcaFeature)
+        score_matrix = linear_kernel(self.user_pcaFeature.loc[user_id].values.reshape(1, -1), self.bus_pcaFeature)
         score_matrix = score_matrix.flatten()
-        score_matrix = pd.Series(score_matrix, index=bus_pcaFeature.index)
+        score_matrix = pd.Series(score_matrix, index=self.bus_pcaFeature.index)
         score_matrix.name = 'cosine_sim_score'
 
         self.recommendation = pd.concat([score_matrix, self.recommendation.set_index('business_id')], axis=1,
                                         join='inner').reset_index()
 
         # Filter restaurants not rated by user
-        rated_res = review_clean[review_clean.user_id == self.user_id].business_id.unique()
+        rated_res = self.review_s[self.review_clean.user_id == self.user_id].business_id.unique()
         self.recommendation = self.recommendation[~self.recommendation.business_id.isin(rated_res)]
 
         # Sort restaurants by cosine similarity score
@@ -228,7 +241,7 @@ class Recommender_Engine:
 
         return self.recommendation
 
-    ###------------------------------------------Collaborative Recommeder--------------------------------------------###
+    ###------------------------------------------Collaborative Recommender-------------------------------------------###
     def collaborative_filtering(self, user_id=None):
         self.user_id = user_id
         if self.user_id is None:
@@ -238,7 +251,8 @@ class Recommender_Engine:
             print('Invalid user ID')
             return None
 
-        self.recommendation = business[business.is_open == 1]
+        # Initiate the module every time
+        self.recommendation = self.business[self.business.is_open == 1]
         if 'stars_pred' in self.recommendation.columns:
             self.recommendation.drop('stars_pred', axis=1, inplace=True)
 
@@ -248,20 +262,20 @@ class Recommender_Engine:
                                 'cuisine', 'style']
 
         # Useful info from trained model
-        mean_rating = useful_info['mean_rating']
-        user_latent = useful_info['user_latent']
-        item_latent = useful_info['item_latent']
-        user_bias = useful_info['user_bias']
-        item_bias = useful_info['item_bias']
-        userid_idx = useful_info['userid_to_index']
-        itemid_idx = useful_info['itemid_to_index']
+        mean_rating = self.useful_info['mean_rating']
+        user_latent = self.useful_info['user_latent']
+        item_latent = self.useful_info['item_latent']
+        user_bias = self.useful_info['user_bias']
+        item_bias = self.useful_info['item_bias']
+        userid_idx = self.useful_info['userid_to_index']
+        itemid_idx = self.useful_info['itemid_to_index']
 
         # Recommendations
         if self.user_id in userid_idx:
             u_idx = userid_idx[self.user_id]
             pred = mean_rating + user_bias[u_idx] + item_bias + np.dot(user_latent[u_idx, :], item_latent.T)
         else:
-            print('Sorry, no personlaized recommendations yet!')
+            print('Sorry, no personalized recommendations yet!')
             print('\nHere are generic recommendations: ')
 
             pred = mean_rating + item_bias
@@ -273,12 +287,13 @@ class Recommender_Engine:
 
         # Filter to unrated business by user
         if self.user_id in userid_idx:
-            rated_bus = review[review.user_id == self.user_id].business_id.unique()
+            rated_bus = self.review[self.review.user_id == self.user_id].business_id.unique()
             prediction = prediction[~prediction.business_id.isin(rated_bus)]
 
         self.recommendation = self.recommendation.merge(prediction, on='business_id', how='inner')
         self.recommendation = self.recommendation.sort_values('stars_pred', ascending=False).reset_index(drop=True)
         self.display_columns.insert(0, 'stars_pred')
+        self.module = 1
         self.display()
 
         return self.recommendation
